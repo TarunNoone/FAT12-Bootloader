@@ -28,6 +28,8 @@ volume_id:              db 12h, 34h, 56h, 78h
 volume_label:           db "Hello World"
 system_identifier:      db "FAT12   "
 
+; prints hello world to TTY
+; Refer: https://github.com/TarunNoone/HelloWorldOS
 main:
     mov ax, 0
     mov ds, ax

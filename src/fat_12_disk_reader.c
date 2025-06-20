@@ -27,17 +27,13 @@ typedef struct {
     uint32_t volume_id;
     char volume_label[11];
     char system_identifier[8];
-} __attribute__((packed)) ExtendedBootRecord;
-
-typedef struct {
     uint8_t boot_code[448];
     uint16_t boot_signature;
-} __attribute__((packed)) BootCode;
+} __attribute__((packed)) ExtendedBootRecord;
 
 FILE *image_file = NULL;
 BootRecord boot_record;
 ExtendedBootRecord extended_boot_record;
-BootCode boot_code;
 
 void open_disk_img(char *image_path) {
     image_file = fopen(image_path, "rb");
@@ -70,7 +66,6 @@ void print_hex(char *label, uint8_t *ptr, int size) {
 void read_boot_drive_info() {
     fread(&boot_record, sizeof(BootRecord), 1, image_file);
     fread(&extended_boot_record, sizeof(ExtendedBootRecord), 1, image_file);
-    fread(&boot_code, sizeof(BootCode), 1, image_file);
     // Chechking few fields to see if the struct is packed correctly.
     print_hex("JMP SHORT NOP       ", (uint8_t *) &boot_record.jmp_short_nop             , 3);
     print_hex("OEM IDENTIFIER      ", (uint8_t *) &boot_record.oem_identifier            , 8);
@@ -84,7 +79,7 @@ void read_boot_drive_info() {
     print_hex("SYSTEM IDENTIFIER   ", (uint8_t *) &extended_boot_record.system_identifier    ,  8);
     printf("\n");
 
-    print_hex("BOOT SIGNATURE      ", (uint8_t *) &boot_code.boot_signature, 2);
+    print_hex("BOOT SIGNATURE      ", (uint8_t *) &extended_boot_record.boot_signature, 2);
     printf("\n");
 }
 
@@ -97,18 +92,8 @@ int main(int argc, char *argv[]) {
     char *image_path = argv[1];
     printf("\nImage file path: %s\n\n", image_path);
 
-    // open_disk_img(image_path);
-    // read_boot_drive_info();
-
-    // Debugging incorrect boot siganture
-    // 4 bytes were missing in the BootDrive
-    // uint16_t was used instead of uint32_t for the last 2 parameters.
-    
-    printf("BootRecord: %lu\n", sizeof(BootRecord));
-    printf("ExtendedBootRecord: %lu\n", sizeof(ExtendedBootRecord));
-    printf("BootCode: %lu\n", sizeof(BootCode));
-    printf("BootRecord + ExtendedBootRecord: %lu\n", sizeof(BootRecord) + sizeof(ExtendedBootRecord));
-    printf("BootRecord + ExtendedBootRecord + BootCode: %lu\n", sizeof(BootRecord) + sizeof(ExtendedBootRecord) + sizeof(BootCode));
+    open_disk_img(image_path);
+    read_boot_drive_info();
     
     return 0;
 }

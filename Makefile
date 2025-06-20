@@ -6,6 +6,9 @@ all: bin/floppy.img
 reader: bin/fat_12_disk_reader
 	bin/fat_12_disk_reader bin/floppy.img
 
+profiler: bin/fat_12_disk_reader
+	/usr/bin/time -v bin/fat_12_disk_reader bin/floppy.img
+
 bin/floppy.img: src/main.asm
 	mkdir -p bin/
 	
@@ -22,7 +25,13 @@ bin/floppy.img: src/main.asm
 	mkfs.fat -F 12 -n "HELLO DRIVE" bin/floppy.img
 	
 	# Copy a file into the FAT-12 File System
-	mcopy -i bin/floppy.img bin/lore.txt "::lore.txt"
+
+	# Trying to make a long file for to check Long File Name entries.
+	# Fun fact: There's an order for adjectives.
+	# It's abbreviated to OSASCOMP : Opinion, Size, Age, Shape, Color, Material, Origin, Type
+
+	# mcopy -i bin/floppy.img bin/lore.txt "::lore.txt"
+	mcopy -i bin/floppy.img bin/lore.txt "::legendary_colossal_archaic_spherical_crimson_draconian_obsidian_tome_lore.txt"
 
 	# Copy multiple copies to fill the floppy disk image. Just for testing.
 	# ./src/multiple_copies.sh

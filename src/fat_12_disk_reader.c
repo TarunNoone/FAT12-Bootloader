@@ -2,11 +2,13 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 // BIOS Parameter Block aka. Boot Record
 typedef struct {
     uint8_t jmp_short_nop[3];
-    char oem_identifier[8];
+    unsigned char oem_identifier[8];
     uint16_t bytes_per_sector;
     uint8_t sectors_per_cluster;
     uint16_t reserved_sectors;
@@ -27,14 +29,14 @@ typedef struct {
     uint8_t reserved_windows_nt;
     uint8_t signature;
     uint32_t volume_id;
-    char volume_label[11];
-    char system_identifier[8];
+    unsigned char volume_label[11];
+    unsigned char system_identifier[8];
     uint8_t boot_code[448];
     uint16_t boot_signature;
 } __attribute__((packed)) ExtendedBootRecord;
 
 typedef struct {
-    char file_name[11]; 
+    unsigned char file_name[11]; 
     uint8_t attribute;
     uint8_t reserved_windows_nt;
     uint8_t creation_time_in_hundredth_secs;
@@ -49,34 +51,34 @@ typedef struct {
 } __attribute__((packed)) StandardDirectoryEntry;
 
 typedef struct {
-    uint8_t sequence_number;
-    uint16_t name_1[5];
+    uint8_t sequence_number; // This is 1-based index.
+    unsigned char name_1[10]; // It's easier to print unsigned chars, than uint16_t // uint16_t name_1[5];
     uint8_t attribute; // always 0x0F for LFN entries
     uint8_t long_entry_type;
     uint8_t checksum;
-    uint16_t name_2[6];
+    unsigned char name_2[12];
     uint8_t always_zero;
-    uint16_t name_3[2];
+    unsigned char name_3[4];
 } __attribute__((packed)) LongFileNameEntry;
 
 typedef union {
     StandardDirectoryEntry standard_entry;
     LongFileNameEntry lfn_entry;
-} DirectoryEntry;
+} RootDirectoryEntry;
 
 FILE *image_file = NULL;
 
 BootRecord boot_record;
 ExtendedBootRecord extended_boot_record;
 
-void open_disk_img(char *image_path) {
+void open_disk_img(unsigned char *image_path) {
     image_file = fopen(image_path, "rb");
     if (image_file == NULL) {
         printf("Error: Could not open image file %s\n", image_path);
     }
 }
 
-void print_hex(char *label, uint8_t *ptr, int size) {
+void print_hex(unsigned char *label, uint8_t *ptr, int size) {
     // I want to read the struct byte-wise.
     // So I get a pointer to the struct.
     // But I need the pointer to advance by 1 Byte at a time.
@@ -97,11 +99,52 @@ void print_hex(char *label, uint8_t *ptr, int size) {
     printf("\n");
 }
 
-void print_string(char *label, char *str, int size) {
+void print_string(unsigned char *label, unsigned char *str, int size) {
     printf("%s: \t", label);
     for(int i = 0; i < size; i++) {
         printf("%c", str[i]);
     }
+    printf("\n");
+}
+
+void print_long_file_name(unsigned char *label, unsigned char *str, int size) {
+    printf("%s: \t", label);
+    int null_count = 0;
+    int padding_count = 0;
+
+    for(int i = 0; i < size; i++) {
+        // Skip 0x00. It's a NULL unsigned character.
+        // Skip 0xFF. It's just padding.
+        // It needs to be casted to unsigned unsigned char.
+        // Otherwise, it'll be implicitly casted to int, which is 32-bit wide.
+        // So it'll become FF FF FF FF
+        // Better to use unsigned unsigned char everywhere to avoid type issues.
+        if(str[i] == 0xFF) {
+            padding_count++;
+            // printf(" + ");
+            continue;
+        }
+
+        if(str[i] == 0x00) {
+            null_count++;
+            // printf(" - ");
+            continue;
+        }
+
+        // For debugging what the char is.
+        // if(('a' <= str[i] && str[i] <= 'z') || str[i] == '_' || str[i] == '.') {
+        //     printf("%c", str[i]);
+        // } else {
+        //     printf(" %02X ", str[i]);
+        // }
+
+        printf("%c", str[i]);
+    }
+    printf("\n");
+
+    // Just for checking if the null and padding chars are being detected.
+    // printf("Null count: %d\n", null_count);
+    // printf("Padding count: %d\n", padding_count);
     printf("\n");
 }
 
@@ -145,9 +188,9 @@ void read_file_allocation_table_section() {
 
 int too_many_prints = 0;
 void print_standard_directory_entry(StandardDirectoryEntry *entry) {
-    if(too_many_prints > 2) return;
+    if(too_many_prints > 5) return;
 
-    print_string("FILE NAME                         ", (char *) &entry->file_name                            , 11);
+    print_string("FILE NAME                         ", (unsigned char *) &entry->file_name                            , 11);
     print_hex   ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
     print_hex   ("RESERVED WINDOWS NT               ", (uint8_t *) &entry->reserved_windows_nt               ,  1);
     print_hex   ("CREATION TIME IN HUNDREDTH SECS   ", (uint8_t *) &entry->creation_time_in_hundredth_secs   ,  1);
@@ -164,7 +207,29 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
 }
 
 void read_root_directory_section() {
-    DirectoryEntry entry;
+    const int bytes_name_1 = 2 * 5;
+    const int bytes_name_2 = 2 * 6;
+    const int bytes_name_3 = 2 * 2;
+    const int bytes_per_lfn_entry = bytes_name_1 + bytes_name_2 + bytes_name_3;
+
+    // Original I thought it could have 223 LFN entries + 1 Standard Entry that the LFN corresponds to.
+    // But the sequence number uses bit-7 as a flag to indiciate last entry in the LFN chain.
+    // So only 6 bits can be used for the actual sequence number.
+    // Highest 6 bit sequence number is 63 or 0x3F.
+    // Sequence number range: 1 - 63, i.e. total 63 numbers
+
+    // TODO: There's a bug where reducing the buffer size messed up the Long File Name printing.
+    // Using dynamic sizeof(string) is causing an issue with: memcpy, and offset calculation in memcpy
+    // Switching to bytes_name_x fixed it.
+
+    // This number is much lower at 20. Calculated through brute force.
+    
+    const int buffer_size = 20 * bytes_per_lfn_entry;
+    unsigned char temporary_buffer[buffer_size];
+    int long_file_name_size = 0;
+
+    RootDirectoryEntry *entries = (RootDirectoryEntry *) malloc(sizeof(RootDirectoryEntry) * boot_record.root_dir_entries_count);
+    fread(entries, sizeof(RootDirectoryEntry), boot_record.root_dir_entries_count, image_file);
 
     int unused_entries = 0;
     int empty_entries = 0;
@@ -172,30 +237,98 @@ void read_root_directory_section() {
     int standard_entries = 0;
 
     for(int i=0; i < boot_record.root_dir_entries_count; i++) {
-        fread(&entry, sizeof(DirectoryEntry), 1, image_file);
 
+        // Step 1:
         // First byte tells if directory is empty / unused / has data.
         // LFN Entries Seq Number just happens to be exactly the byte we need to check.
-        if(entry.standard_entry.file_name[0] == 0x00 || entry.lfn_entry.sequence_number == 0x00) {
+        if(entries[i].standard_entry.file_name[0] == 0x00 || entries[i].lfn_entry.sequence_number == 0x00) {
             empty_entries++;
             continue;
         }
 
-        if(entry.standard_entry.file_name[0] == 0xE5 || entry.lfn_entry.sequence_number == 0xE5) {
+        // Step 2:
+        // Check if the entry is unused.
+        if(entries[i].standard_entry.file_name[0] == 0xE5 || entries[i].lfn_entry.sequence_number == 0xE5) {
             unused_entries++;
             continue;
         }
 
-        // Standard entry / LFN entry have the same entry value.
-        // It's the same bits.
-        if(entry.standard_entry.attribute == 0x0F || entry.lfn_entry.attribute == 0x0F) {
+        // Step 3:
+        // Check if the entry is a Long File Name entry.
+        if(entries[i].standard_entry.attribute == 0x0F || entries[i].lfn_entry.attribute == 0x0F) {
             lfn_entries++;
+
+            // Step 4:
+            // Read the portion of long file name into temporary buffer
+
+            // For some reason, the last entry has extra 64? Like: 1, 2, 3, 4, 5 + 64. Why???
+            // 64 or 0x40 corresponds to the bit-7 of the sequence number.
+            // This bit is used as a flag to indicate the last long file name entry.
+            int is_last_lfn_entry = (0x40 & entries[i].lfn_entry.sequence_number) > 0;
+            
+            // Remove the flag for last entry from the sequence number
+            // It keeps the sequence number based calculations simpler.
+            if(is_last_lfn_entry) {
+                entries[i].lfn_entry.sequence_number ^= 0x40; // Set the bit-7 to 0.
+            }
+
+            // printf("Sequence Number: %d\n", entries[i].lfn_entry.sequence_number);
+
+            // print_string("NAME 1", entries[i].lfn_entry.name_1, 10);
+            // print_string("NAME 2", entries[i].lfn_entry.name_2, 12);
+            // print_string("NAME 3", entries[i].lfn_entry.name_3, 4);
+
+            long_file_name_size += bytes_per_lfn_entry;
+
+            memcpy(
+                    (
+                        temporary_buffer + 
+                        (entries[i].lfn_entry.sequence_number - 1) * bytes_per_lfn_entry
+                    ),
+                    entries[i].lfn_entry.name_1, 
+                    bytes_name_1
+                );
+
+            memcpy(
+                    (
+                        temporary_buffer + 
+                        (entries[i].lfn_entry.sequence_number - 1) * bytes_per_lfn_entry + 
+                        bytes_name_1                        
+                    ),
+                    entries[i].lfn_entry.name_2, 
+                    bytes_name_2
+                );
+                    
+            memcpy(
+                    (
+                        temporary_buffer + 
+                        (entries[i].lfn_entry.sequence_number - 1) * bytes_per_lfn_entry + 
+                        bytes_name_1 + 
+                        bytes_name_2
+                    ), 
+                    entries[i].lfn_entry.name_3, 
+                    bytes_name_3
+                );
+
             continue;
-        } else {
+        } else{
+            // Step 5:
+            // For a standard entry, check if there was any Long File Name stored in the temporary buffer
+            // If it is, then that's then name associated with the the current standard entry.
+
+            // Established through brute force that max number of entries used will be 20 for LFN.
+            if(long_file_name_size > 0) {
+                print_long_file_name("LONG FILE NAME    ", temporary_buffer, long_file_name_size);
+                printf("Number of entries used: %d\n", long_file_name_size / bytes_per_lfn_entry);
+                long_file_name_size = 0;
+            }
             standard_entries++;
         }
 
-        print_standard_directory_entry(&entry.standard_entry);
+        // Step 5:
+        // Print the standard entry data.
+        printf("Entry %d:\n", i);
+        print_standard_directory_entry(&entries[i].standard_entry);
     }
 
     printf("Total entries       : %d\n", unused_entries + empty_entries + lfn_entries + standard_entries);
@@ -205,13 +338,13 @@ void read_root_directory_section() {
     printf("Standard entries    : %d\n", standard_entries);
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, unsigned char *argv[]) {
     if (argc != 2) {
         printf("Usage: %s <image_file_path>\n", argv[0]);
         return 1;
     }
     
-    char *image_path = argv[1];
+    unsigned char *image_path = argv[1];
     printf("\nImage file path: %s\n\n", image_path);
 
     open_disk_img(image_path);

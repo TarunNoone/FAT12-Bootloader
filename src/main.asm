@@ -17,14 +17,14 @@ media_descriptor:       db 0F0h
 sectors_per_fat:        dw 9
 sectors_per_track:      dw 18
 heads:                  dw 2
-hidden_sectors:         dw 0
-large_sector_count:     dw 0
+hidden_sectors:         dd 0 ; 4 bytes
+large_sector_count:     dd 0 ; 4 bytes
 
 ; EBPB aka. Extended Boot Record
 drive_number:           db 0
 reserved_windows_nt:    db 0
 signature:              db 0x29
-volume_id:              db DEh, ADh, BEh, EFh
+volume_id:              db 0xDE, 0xAD, 0xBE, 0xEF
 volume_label:           db "Hello World"
 system_identifier:      db "FAT12   "
 

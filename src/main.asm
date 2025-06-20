@@ -24,7 +24,7 @@ large_sector_count:     dw 0
 drive_number:           db 0
 reserved_windows_nt:    db 0
 signature:              db 0x29
-volume_id:              db 12h, 34h, 56h, 78h
+volume_id:              db DEh, ADh, BEh, EFh
 volume_label:           db "Hello World"
 system_identifier:      db "FAT12   "
 

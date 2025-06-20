@@ -3,6 +3,9 @@
 all: bin/floppy.img
 	# Build all
 
+reader: bin/fat_12_disk_reader
+	bin/fat_12_disk_reader bin/floppy.img
+
 bin/floppy.img: src/main.asm
 	mkdir -p bin/
 	
@@ -23,6 +26,11 @@ bin/floppy.img: src/main.asm
 	
 	# Copy the bootloader to the first 512 Bytes of Floppy Disk Image
 	dd if=bin/bootloader.bin of=bin/floppy.img conv=notrunc	
+
+bin/fat_12_disk_reader: src/fat_12_disk_reader.c
+
+	# Compile the fat_12_disk_reader
+	gcc -o bin/fat_12_disk_reader src/fat_12_disk_reader.c
 
 clean:
 	rm -r bin/

@@ -46,7 +46,23 @@ typedef struct {
     uint16_t last_modified_date;
     uint16_t first_cluster_number;
     uint32_t file_size_in_bytes;
-} __attribute__((packed)) DirectoryEntry;
+} __attribute__((packed)) StandardDirectoryEntry;
+
+typedef struct {
+    uint8_t sequence_number;
+    uint16_t name_1[5];
+    uint8_t attribute; // always 0x0F for LFN entries
+    uint8_t long_entry_type;
+    uint8_t checksum;
+    uint16_t name_2[6];
+    uint8_t always_zero;
+    uint16_t name_3[2];
+} __attribute__((packed)) LongFileNameEntry;
+
+typedef union {
+    StandardDirectoryEntry standard_entry;
+    LongFileNameEntry lfn_entry;
+} DirectoryEntry;
 
 FILE *image_file = NULL;
 
@@ -127,7 +143,7 @@ void read_file_allocation_table_section() {
     fseek(image_file, fat_table_size, SEEK_CUR);
 }
 
-void print_directory_entry(DirectoryEntry *entry) {
+void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     print_string("FILE NAME                         ", (char *) &entry->file_name                            , 11);
     print_hex   ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
     print_hex   ("RESERVED WINDOWS NT               ", (uint8_t *) &entry->reserved_windows_nt               ,  1);
@@ -142,12 +158,50 @@ void print_directory_entry(DirectoryEntry *entry) {
     print_hex   ("FILE SIZE IN BYTES                ", (uint8_t *) &entry->file_size_in_bytes                ,  4);
     printf("\n");
 }
+
 void read_root_directory() {
     DirectoryEntry entry;
-    for(int i=0; i < 3; i++) {
+
+    int unused_entries = 0;
+    int empty_entries = 0;
+    int lfn_entries = 0;
+    int standard_entries = 0;
+
+    for(int i=0; i < boot_record.root_dir_entries_count; i++) {
         fread(&entry, sizeof(DirectoryEntry), 1, image_file);
-        print_directory_entry(&entry);
+
+        // First byte tells if directory is empty / unused / has data.
+        // LFN Entries Seq Number just happens to be exactly the byte we need to check.
+        if(entry.standard_entry.file_name[0] == 0x00 || entry.lfn_entry.sequence_number == 0x00) {
+            // printf("No files / directories in this directory.\n");
+            empty_entries++;
+            continue;
+        }
+
+        if(entry.standard_entry.file_name[0] == 0xE5 || entry.lfn_entry.sequence_number == 0xE5) {
+            // printf("Unused entry.\n");
+            unused_entries++;
+            continue;
+        }
+
+        // Standard entry / LFN entry have the same entry value.
+        // It's the same bits.
+        if(entry.standard_entry.attribute == 0x0F || entry.lfn_entry.attribute == 0x0F) {
+            // printf("Long file name entry.\n");
+            lfn_entries++;
+            continue;
+        } else {
+            standard_entries++;
+        }
+
+        print_standard_directory_entry(&entry.standard_entry);
     }
+
+    printf("Total entries: %d\n", unused_entries + empty_entries + lfn_entries + standard_entries);
+    printf("Unused entries: %d\n", unused_entries);
+    printf("Empty entries: %d\n", empty_entries);
+    printf("LFN entries: %d\n", lfn_entries);
+    printf("Standard entries: %d\n", standard_entries);
 }
 
 int main(int argc, char *argv[]) {

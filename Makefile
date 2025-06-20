@@ -23,6 +23,9 @@ bin/floppy.img: src/main.asm
 	
 	# Copy a file into the FAT-12 File System
 	mcopy -i bin/floppy.img bin/lore.txt "::lore.txt"
+
+	# Copy multiple copies to fill the floppy disk image. Just for testing.
+	# ./src/multiple_copies.sh
 	
 	# Copy the bootloader to the first 512 Bytes of Floppy Disk Image
 	dd if=bin/bootloader.bin of=bin/floppy.img conv=notrunc	

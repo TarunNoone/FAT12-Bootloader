@@ -143,7 +143,10 @@ void read_file_allocation_table_section() {
     fseek(image_file, fat_table_size, SEEK_CUR);
 }
 
+int too_many_prints = 0;
 void print_standard_directory_entry(StandardDirectoryEntry *entry) {
+    if(too_many_prints > 2) return;
+
     print_string("FILE NAME                         ", (char *) &entry->file_name                            , 11);
     print_hex   ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
     print_hex   ("RESERVED WINDOWS NT               ", (uint8_t *) &entry->reserved_windows_nt               ,  1);
@@ -157,9 +160,10 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     print_hex   ("FIRST CLUSTER NUMBER              ", (uint8_t *) &entry->first_cluster_number              ,  2);
     print_hex   ("FILE SIZE IN BYTES                ", (uint8_t *) &entry->file_size_in_bytes                ,  4);
     printf("\n");
+    too_many_prints++;
 }
 
-void read_root_directory() {
+void read_root_directory_section() {
     DirectoryEntry entry;
 
     int unused_entries = 0;
@@ -173,13 +177,11 @@ void read_root_directory() {
         // First byte tells if directory is empty / unused / has data.
         // LFN Entries Seq Number just happens to be exactly the byte we need to check.
         if(entry.standard_entry.file_name[0] == 0x00 || entry.lfn_entry.sequence_number == 0x00) {
-            // printf("No files / directories in this directory.\n");
             empty_entries++;
             continue;
         }
 
         if(entry.standard_entry.file_name[0] == 0xE5 || entry.lfn_entry.sequence_number == 0xE5) {
-            // printf("Unused entry.\n");
             unused_entries++;
             continue;
         }
@@ -187,7 +189,6 @@ void read_root_directory() {
         // Standard entry / LFN entry have the same entry value.
         // It's the same bits.
         if(entry.standard_entry.attribute == 0x0F || entry.lfn_entry.attribute == 0x0F) {
-            // printf("Long file name entry.\n");
             lfn_entries++;
             continue;
         } else {
@@ -197,11 +198,11 @@ void read_root_directory() {
         print_standard_directory_entry(&entry.standard_entry);
     }
 
-    printf("Total entries: %d\n", unused_entries + empty_entries + lfn_entries + standard_entries);
-    printf("Unused entries: %d\n", unused_entries);
-    printf("Empty entries: %d\n", empty_entries);
-    printf("LFN entries: %d\n", lfn_entries);
-    printf("Standard entries: %d\n", standard_entries);
+    printf("Total entries       : %d\n", unused_entries + empty_entries + lfn_entries + standard_entries);
+    printf("Unused entries      : %d\n", unused_entries);
+    printf("Empty entries       : %d\n", empty_entries);
+    printf("LFN entries         : %d\n", lfn_entries);
+    printf("Standard entries    : %d\n", standard_entries);
 }
 
 int main(int argc, char *argv[]) {
@@ -216,7 +217,7 @@ int main(int argc, char *argv[]) {
     open_disk_img(image_path);
     read_boot_drive_section();
     read_file_allocation_table_section();
-    read_root_directory();
+    read_root_directory_section();
     
     return 0;
 }

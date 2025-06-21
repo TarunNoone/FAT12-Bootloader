@@ -393,7 +393,7 @@ void read_n_directory_entries(RootDirectoryEntry *entries, int n) {
             // Established through brute force that max number of entries used will be 20 for LFN.
             if(long_file_name_size > 0) {
                 print_long_file_name("LONG FILE NAME    ", temporary_buffer, long_file_name_size);
-                printf("Number of entries used: %d\n", long_file_name_size / bytes_per_lfn_entry);
+                // printf("Number of entries used: %d\n", long_file_name_size / bytes_per_lfn_entry);
                 long_file_name_size = 0;
             }
             standard_entries++;

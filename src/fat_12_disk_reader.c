@@ -71,6 +71,11 @@ typedef union {
 
 FILE *image_file = NULL;
 
+const int bytes_name_1 = 2 * 5;
+const int bytes_name_2 = 2 * 6;
+const int bytes_name_3 = 2 * 2;
+const int bytes_per_lfn_entry = bytes_name_1 + bytes_name_2 + bytes_name_3;
+
 int sectors_in_reserved_section;
 int sectors_in_fat_section;
 int sectors_in_root_directory;
@@ -237,6 +242,9 @@ void read_file_allocation_table_section() {
     fseek(image_file, boot_record.fat_count * boot_record.sectors_per_fat * boot_record.bytes_per_sector, SEEK_CUR);
 }
 
+// Forward declaration
+void read_data_in_this_entry(StandardDirectoryEntry *entry);
+
 int too_many_prints = 0;
 void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     if(too_many_prints > 5) return;
@@ -293,77 +301,17 @@ uint16_t get_next_cluster_number(int active_cluster_number) {
     return table_value;
 }
 
-void read_cluster_chain(int active_cluster_number) {
-    uint8_t cluster_data [512]; // Not sure how to use the dynamic value from: boot_record.bytes_per_sector
-
-    // Move the file pointer to the cluster location
-    fseek(image_file, 
-            file_desc_data_section_offset + ((active_cluster_number - 2) * boot_record.bytes_per_sector),
-            SEEK_SET
-        );
-
-    // Read the cluster data
-    // printf("Cluster number: %d\n", active_cluster_number);
-    fread(&cluster_data, 512, 1, image_file);
-    print_plain_string(cluster_data, 512);
-
-    uint16_t next_cluster_number = get_next_cluster_number(active_cluster_number);
-
-    if(next_cluster_number >= 0xFF8) {
-        printf("\nThere are no more clusters in the chain.\n");
-    } else if(next_cluster_number == 0xFF7) {
-        printf("\nThis is a bad cluster.\n");
-    } else if(next_cluster_number == 0 || next_cluster_number == 1) {
-        printf("\nThese are reserved for their own purposes.\n");
-    } else {
-        // printf("Next cluster number: %d\n\n", next_cluster_number);
-        read_cluster_chain(next_cluster_number);
-    }
-}
-
-// According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
-// So each data entry points to a cluster containing the data. This cluster is located in the Data Section.
-// If the data can't fit in a single cluster, then it points to another cluster in the Data Section.
-// Sort of like a linked list.
-
-void read_data_in_this_entry(StandardDirectoryEntry *entry) {
-    printf("Cluster Data: ");
-    read_cluster_chain(entry->first_cluster_number);
-    printf("\n");
-}
-
-void read_root_directory_section() {
-    const int bytes_name_1 = 2 * 5;
-    const int bytes_name_2 = 2 * 6;
-    const int bytes_name_3 = 2 * 2;
-    const int bytes_per_lfn_entry = bytes_name_1 + bytes_name_2 + bytes_name_3;
-
-    // Original I thought it could have 223 LFN entries + 1 Standard Entry that the LFN corresponds to.
-    // But the sequence number uses bit-7 as a flag to indiciate last entry in the LFN chain.
-    // So only 6 bits can be used for the actual sequence number.
-    // Highest 6 bit sequence number is 63 or 0x3F.
-    // Sequence number range: 1 - 63, i.e. total 63 numbers
-
-    // TODO: There's a bug where reducing the buffer size messed up the Long File Name printing.
-    // Using dynamic sizeof(string) is causing an issue with: memcpy, and offset calculation in memcpy
-    // Switching to bytes_name_x fixed it.
-
-    // This number is much lower at 20. Calculated through brute force.
-    
+void read_n_directory_entries(RootDirectoryEntry *entries, int n) {
     const int buffer_size = 20 * bytes_per_lfn_entry;
     unsigned char temporary_buffer[buffer_size];
     int long_file_name_size = 0;
-
-    RootDirectoryEntry *entries = (RootDirectoryEntry *) malloc(sizeof(RootDirectoryEntry) * boot_record.root_dir_entries_count);
-    fread(entries, sizeof(RootDirectoryEntry), boot_record.root_dir_entries_count, image_file);
 
     int unused_entries = 0;
     int empty_entries = 0;
     int lfn_entries = 0;
     int standard_entries = 0;
 
-    for(int i=0; i < boot_record.root_dir_entries_count; i++) {
-
+    for(int i=0; i < n; i++) {
         // Step 1:
         // First byte tells if directory is empty / unused / has data.
         // LFN Entries Seq Number just happens to be exactly the byte we need to check.
@@ -457,9 +405,10 @@ void read_root_directory_section() {
         print_standard_directory_entry(&entries[i].standard_entry);
 
         // Step 7:
-        // Read the data in this entry if the attribute is ARCHIEVE.
-        if(entries[i].standard_entry.attribute == 0x20) {
+        // Read the data in this entry if the attribute is ARCHIEVE / DIRECTORY.
+        if(entries[i].standard_entry.attribute == 0x20 || entries[i].standard_entry.attribute == 0x10) {
             read_data_in_this_entry(&entries[i].standard_entry);
+            printf("\n");
         }
     }
 
@@ -469,6 +418,83 @@ void read_root_directory_section() {
     printf("LFN entries         : %d\n", lfn_entries);
     printf("Standard entries    : %d\n", standard_entries);
     printf("\n");    
+}
+
+void read_cluster_chain(int active_cluster_number, int is_directory) {
+    uint8_t cluster_data [512]; // Not sure how to use the dynamic value from: boot_record.bytes_per_sector
+
+    // Move the file pointer to the cluster location
+    fseek(image_file, 
+            file_desc_data_section_offset + ((active_cluster_number - 2) * boot_record.bytes_per_sector),
+            SEEK_SET
+        );
+    fread(&cluster_data, 512, 1, image_file);
+
+    if(is_directory) {
+        // 512 bytes / 32 bytes per entry = 16 entries
+        RootDirectoryEntry *entries = (RootDirectoryEntry *) cluster_data;
+        read_n_directory_entries(entries, 16);
+    } else {
+        print_plain_string(cluster_data, 512);
+    }
+
+    uint16_t next_cluster_number = get_next_cluster_number(active_cluster_number);
+
+    if(next_cluster_number >= 0xFF8) {
+        printf("\nThere are no more clusters in the chain.\n");
+    } else if(next_cluster_number == 0xFF7) {
+        printf("\nThis is a bad cluster.\n");
+    } else if(next_cluster_number == 0 || next_cluster_number == 1) {
+        printf("\nThese are reserved for their own purposes.\n");
+    } else {
+        // printf("Next cluster number: %d\n\n", next_cluster_number);
+
+        // The directory entry indicates ARCHIEVE / DIRECTORY
+        // It also points to the first cluster number
+        // So all the entire cluster chain contains either ARCHIEVE data / DIRECTORY data
+        // It won't change mid chain
+        // TODO: But I'm not able to make it work properly
+        read_cluster_chain(next_cluster_number, is_directory);
+    }
+}
+
+// According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
+// So each data entry points to a cluster containing the data. This cluster is located in the Data Section.
+// If the data can't fit in a single cluster, then it points to another cluster in the Data Section.
+// Sort of like a linked list.
+
+void read_data_in_this_entry(StandardDirectoryEntry *entry) {
+    if(entry->attribute == 0x20) {
+        printf("ATTRIBUTE: ARCHIEVE\n");
+        read_cluster_chain(entry->first_cluster_number, 0);
+        printf("END OF ARCHIEVE CHAIN\n");
+    }
+
+    // if(entry->attribute == 0x10) {
+    //     printf("ATTRIBUTE: DIRECTORY\n");
+    //     read_cluster_chain(entry->first_cluster_number, 1);
+    //     printf("END OF DIRECTORY CHAIN\n");
+    // }
+}
+
+void read_root_directory_section() {
+
+    // Original I thought it could have 223 LFN entries + 1 Standard Entry that the LFN corresponds to.
+    // But the sequence number uses bit-7 as a flag to indiciate last entry in the LFN chain.
+    // So only 6 bits can be used for the actual sequence number.
+    // Highest 6 bit sequence number is 63 or 0x3F.
+    // Sequence number range: 1 - 63, i.e. total 63 numbers
+
+    // FIXED: There's a bug where reducing the buffer size messed up the Long File Name printing.
+    // Using dynamic sizeof(string) is causing an issue with: memcpy, and offset calculation in memcpy
+    // Switching to bytes_name_x fixed it.
+
+    // This number is much lower at 20. Calculated through brute force.
+
+    RootDirectoryEntry *entries = (RootDirectoryEntry *) malloc(sizeof(RootDirectoryEntry) * boot_record.root_dir_entries_count);
+    fread(entries, sizeof(RootDirectoryEntry), boot_record.root_dir_entries_count, image_file);
+
+    read_n_directory_entries(entries, boot_record.root_dir_entries_count);
 }
 
 void close_disk_img() {

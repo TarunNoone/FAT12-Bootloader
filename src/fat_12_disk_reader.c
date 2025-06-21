@@ -251,7 +251,7 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     too_many_prints++;
 }
 
-void get_next_cluster_number(int active_cluster_number) {
+uint8_t get_next_cluster_number(int active_cluster_number) {
 
     // Sector fat_table[boot_record.sectors_per_fat];
     // fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
@@ -262,35 +262,19 @@ void get_next_cluster_number(int active_cluster_number) {
     // printf("Size of short dtype: %zu \n", sizeof(unsigned short));
 
     // (9 sectors / FAT_table * 512 bytes / sector * 8 bits / bytes) / (12 bits / FAT entry) = 3072 FAT entries / FAT_table
-    uint8_t fat_table[boot_record.bytes_per_sector * 2];
-    uint16_t table_value;
-    int fat_table_index = 0;
+    uint8_t fat_table[boot_record.sectors_per_fat * boot_record.bytes_per_sector];
 
-    // Assume the fat_table is zer-based indexing, i.e. first 12-bit entry is index-0
+    fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
+    fread(&fat_table, boot_record.sectors_per_fat * boot_record.bytes_per_sector, 1, image_file);
     
-    // So for FAT-entry-0, &(fat_table[0]) gives the starting pointer
-    // Read 16-bits from this pointer. Remove last 4 bits. Voila, 12-bits of FAT-entry-0
-    // Array-operator has higher precendence than address-of operator.
-    // And that is what we want.
-    fat_table_index = 0;
-    table_value = *((uint16_t *)(&fat_table[0])) >> 4;
+    uint16_t table_value;
+    int fat12_table_index = (active_cluster_number + active_cluster_number / 2) % (boot_record.sectors_per_fat * boot_record.bytes_per_sector);
 
-    // For FAT-entry-1, &(fat_table[1]) gives the starting pointer
-    // Read 16-bits from this pointer. Remove first 4 bits. Voila, 12-bits of FAT-entry-1
-    fat_table_index = 1;
-    table_value = *((uint16_t *)(&fat_table[1])) & 0xFFF;
-
-    // uint32_t fat_offset = (active_cluster_number * boot_record.bytes_per_sector) + (active_cluster_number * boot_record.bytes_per_sector) / 2;
-    // uint32_t fat_sector = first_fat_sector_index + (fat_offset / boot_record.bytes_per_sector);  
-    // uint32_t table_entry_offset = fat_offset % boot_record.bytes_per_sector;
-
-    // // Read FAT sectors needed to get the next cluster number.
-    // // 2 sectors need to be read, since the 12-bit value could be one the border of 2 sectors.
-    // fseek(image_file, fat_sector * boot_record.bytes_per_sector, SEEK_SET);
-    // fread(&fat_table, 2 * sizeof(Sector), 1, image_file);
-
-    // uint16_t table_value = *((uint16_t *)(&fat_table[table_entry_offset]));
-    // table_value = (active_cluster_number & 1) ? table_value >> 4 : table_value & 0XFFF;
+    if(fat12_table_index % 2 == 1) {
+        table_value = *((uint16_t *)(&fat_table[fat12_table_index])) >> 4;
+    } else {
+        table_value = *((uint16_t *)(&fat_table[fat12_table_index])) & 0xFFF;
+    }
 
     if(table_value >= 0xFF8) {
         printf("There are no more clusters in the chain.\n");
@@ -300,6 +284,7 @@ void get_next_cluster_number(int active_cluster_number) {
         printf("Next cluster number: %d\n", table_value);
     }
     printf("\n");
+    return table_value;
 }
 
 void read_cluster(int active_cluster_number) {
@@ -317,9 +302,6 @@ void read_cluster(int active_cluster_number) {
     // Read the cluster data
     fread(&cluster_data, sizeof(Sector), 1, image_file);
     print_string("CLUSTER DATA  ", (unsigned char *) &cluster_data, sizeof(Sector));
-
-    get_next_cluster_number(active_cluster_number);
-
     printf("\n");
 }
 
@@ -330,6 +312,16 @@ void read_cluster(int active_cluster_number) {
 
 void read_data_in_this_entry(StandardDirectoryEntry *entry) {
     read_cluster(entry->first_cluster_number);
+    uint16_t next_cluster_number = get_next_cluster_number(entry->first_cluster_number);
+
+    if(next_cluster_number >= 0xFF8) {
+        // printf("There are no more clusters in the chain.\n");
+    } else if(next_cluster_number == 0xFF7) {
+        // printf("This is a bad cluster.\n");
+    } else {
+        // printf("Next cluster number: %d\n", table_value);
+        read_cluster(next_cluster_number);
+    }
 }
 
 void read_root_directory_section() {

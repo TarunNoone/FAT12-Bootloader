@@ -251,47 +251,48 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     too_many_prints++;
 }
 
-uint8_t get_next_cluster_number(int active_cluster_number) {
-
-    // Sector fat_table[boot_record.sectors_per_fat];
-    // fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
-    // fread(&fat_table, sizeof(Sector) * boot_record.sectors_per_fat, 1,image_file);
-
-    // // print_hex("FAT TABLE", (uint8_t *) &fat_table, sizeof(Sector) * boot_record.sectors_per_fat);
-
-    // printf("Size of short dtype: %zu \n", sizeof(unsigned short));
-
-    // (9 sectors / FAT_table * 512 bytes / sector * 8 bits / bytes) / (12 bits / FAT entry) = 3072 FAT entries / FAT_table
+uint16_t get_next_cluster_number(int active_cluster_number) {
+    // There are 2 copies of FAT-12 Table.
+    // Just read one.
     uint8_t fat_table[boot_record.sectors_per_fat * boot_record.bytes_per_sector];
 
     fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
     fread(&fat_table, boot_record.sectors_per_fat * boot_record.bytes_per_sector, 1, image_file);
-    
+
+    // 12-bit Fat Entry 0 corresponds to Byte Index 0
+    // 12-bit Fat Entry 1 corresponds to Byte Index 1
+    // 12-bit Fat Entry 2 corresponds to Byte Index 3
+    // 12-bit Fat Entry 3 corresponds to Byte Index 4
+    // 12-bit Fat Entry 4 corresponds to Byte Index 6
+    // 12-bit Fat Entry 5 corresponds to Byte Index 7
+
     uint16_t table_value;
-    int fat12_table_index = (active_cluster_number + active_cluster_number / 2) % (boot_record.sectors_per_fat * boot_record.bytes_per_sector);
 
-    if(fat12_table_index % 2 == 1) {
-        table_value = *((uint16_t *)(&fat_table[fat12_table_index])) >> 4;
+    int fat12_table_index = active_cluster_number + (active_cluster_number / 2);
+    printf("FAT12 Table Index: %d \n", fat12_table_index);
+
+    table_value = *((uint16_t *)(&fat_table[fat12_table_index]));
+    // printf("Two bytes    : %04X \n", table_value);
+
+    // I was checking the fat12_table_index, instead of active_cluster_number.
+    // Took too long to fix this bug.
+    if(active_cluster_number % 2 == 1) {
+        table_value >>= 4;
     } else {
-        table_value = *((uint16_t *)(&fat_table[fat12_table_index])) & 0xFFF;
+        table_value &= 0xFFF;
     }
 
-    if(table_value >= 0xFF8) {
-        printf("There are no more clusters in the chain.\n");
-    } else if(table_value == 0xFF7) {
-        printf("This is a bad cluster.\n");
-    } else {
-        printf("Next cluster number: %d\n", table_value);
-    }
-    printf("\n");
+    // printf("First Byte   : %02X \n", fat_table[fat12_table_index]);
+    // printf("Second Byte  : %02X \n", fat_table[fat12_table_index + 1]);
+
     return table_value;
 }
 
-void read_cluster(int active_cluster_number) {
+void read_cluster_chain(int active_cluster_number) {
     int cluster_offset_in_bytes;
     Sector cluster_data;
 
-    cluster_offset_in_bytes = file_desc_data_section_offset + (active_cluster_number - 2) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector;
+    cluster_offset_in_bytes = file_desc_data_section_offset + ((active_cluster_number - 2) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
 
     // Move the file pointer to the cluster location
     fseek(image_file, 
@@ -301,8 +302,21 @@ void read_cluster(int active_cluster_number) {
 
     // Read the cluster data
     fread(&cluster_data, sizeof(Sector), 1, image_file);
+    printf("Cluster number: %d\n", active_cluster_number);
     print_string("CLUSTER DATA  ", (unsigned char *) &cluster_data, sizeof(Sector));
-    printf("\n");
+
+    uint16_t next_cluster_number = get_next_cluster_number(active_cluster_number);
+
+    if(next_cluster_number >= 0xFF8) {
+        printf("There are no more clusters in the chain.\n");
+    } else if(next_cluster_number == 0xFF7) {
+        printf("This is a bad cluster.\n");
+    } else if(next_cluster_number == 0 || next_cluster_number == 1) {
+        printf("These are reserved for their own purposes.\n");
+    } else {
+        printf("Next cluster number: %d\n\n", next_cluster_number);
+        read_cluster_chain(next_cluster_number);
+    }
 }
 
 // According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
@@ -311,17 +325,8 @@ void read_cluster(int active_cluster_number) {
 // Sort of like a linked list.
 
 void read_data_in_this_entry(StandardDirectoryEntry *entry) {
-    read_cluster(entry->first_cluster_number);
-    uint16_t next_cluster_number = get_next_cluster_number(entry->first_cluster_number);
-
-    if(next_cluster_number >= 0xFF8) {
-        // printf("There are no more clusters in the chain.\n");
-    } else if(next_cluster_number == 0xFF7) {
-        // printf("This is a bad cluster.\n");
-    } else {
-        // printf("Next cluster number: %d\n", table_value);
-        read_cluster(next_cluster_number);
-    }
+    read_cluster_chain(entry->first_cluster_number);
+    printf("\n");
 }
 
 void read_root_directory_section() {
@@ -481,6 +486,17 @@ int main(int argc, unsigned char *argv[]) {
     read_boot_drive_section();
     read_file_allocation_table_section();
     read_root_directory_section();
+
+    // Reading the first FAT sector for debug purposes.
+    // Sector tmp_sector;
+    // fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
+    // fread(&tmp_sector, sizeof(Sector), 1,image_file);
+
+    // print_hex("FAT TABLE", (uint8_t *) &tmp_sector, sizeof(Sector));
+
+    // for(int i=2; i < 10; i++)
+    //     read_cluster_chain(i);
+    
     close_disk_img();
     
     return 0;

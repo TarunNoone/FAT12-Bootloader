@@ -30,7 +30,8 @@ bin/floppy.img: src/main.asm
 	# mcopy -i bin/floppy.img src/lore.txt "::lore.txt"
 	# mcopy -i bin/floppy.img src/lore.txt "::legendary_colossal_archaic_spherical_crimson_draconian_obsidian_tome_lore.txt"
 	# mcopy -i bin/floppy.img src/lore512.txt "::lore512.txt"
-	mcopy -i bin/floppy.img src/lore1024.txt "::lore1024.txt"
+	# mcopy -i bin/floppy.img src/lore1024.txt "::lore1024.txt"
+	mcopy -i bin/floppy.img -s src/myfolder "::/"
 
 	# Copy multiple copies to fill the floppy disk image. Just for testing.
 	# ./src/multiple_copies.sh

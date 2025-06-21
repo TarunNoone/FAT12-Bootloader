@@ -247,7 +247,7 @@ void read_data_in_this_entry(StandardDirectoryEntry *entry);
 
 int too_many_prints = 0;
 void print_standard_directory_entry(StandardDirectoryEntry *entry) {
-    if(too_many_prints > 5) return;
+    // if(too_many_prints > 5) return;
 
     print_string    ("FILE NAME                         ", (unsigned char *) &entry->file_name                   , 11);
     print_hex       ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
@@ -409,6 +409,9 @@ void read_n_directory_entries(RootDirectoryEntry *entries, int n) {
         if(entries[i].standard_entry.attribute == 0x20 || entries[i].standard_entry.attribute == 0x10) {
             // Primarily to skip ".", ".."
             // But there could be hidden files, those still need to be processed somehow.
+            // This seems good enough somehow.
+            // ".l.txt" is treated as Long File Name.
+            // Even though it's less than 8.3 Format length
             if(entries[i].standard_entry.file_name[0] == '.') continue;
 
             read_data_in_this_entry(&entries[i].standard_entry);

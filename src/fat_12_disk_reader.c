@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
 
 // BIOS Parameter Block aka. Boot Record
 typedef struct {
@@ -64,13 +66,17 @@ typedef union {
     LongFileNameEntry lfn_entry;
 } RootDirectoryEntry;
 
+typedef uint8_t Sector[512];
+
 FILE *image_file = NULL;
 
 int sectors_in_reserved_section;
 int sectors_in_fat_table;
 int sectors_in_root_directory;
 int sectors_in_data_section;
-int first_data_sector;
+
+int first_data_sector_index;
+int file_desc_data_sector_offset;
 
 BootRecord boot_record;
 ExtendedBootRecord extended_boot_record;
@@ -118,7 +124,8 @@ void print_string(unsigned char *label, unsigned char *str, int size) {
         }
         printf("%c", str[i]);
     }
-    // printf("\nNull count: %d\n", null_count);
+    printf("\n");
+    // printf("Null count: %d\n", null_count);
 }
 
 void print_long_file_name(unsigned char *label, unsigned char *str, int size) {
@@ -194,13 +201,17 @@ void read_boot_drive_section() {
     sectors_in_root_directory = ((boot_record.root_dir_entries_count * sizeof(RootDirectoryEntry)) + (boot_record.bytes_per_sector - 1)) / boot_record.bytes_per_sector;
     sectors_in_data_section = boot_record.total_sectors - (sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory);
 
-    first_data_sector = sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory;
+    // Calculate the offset of Data Sector wrt. the start of the Floppyy Disk Image.
+    first_data_sector_index = sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory;
+    file_desc_data_sector_offset = first_data_sector_index * boot_record.bytes_per_sector;
 
-    printf("Sectors in Reserved Section         : %d\n", sectors_in_reserved_section);
-    printf("Sectors in FAT Table                : %d\n", sectors_in_fat_table);
-    printf("Sectors in Root Directory           : %d\n", sectors_in_root_directory);
-    printf("Sectors in Data Section             : %d\n", sectors_in_data_section);
-    printf("Total Sectors                       : %d\n", boot_record.total_sectors);
+    printf("Sectors in Reserved Section                     : %d\n", sectors_in_reserved_section);
+    printf("Sectors in FAT Table                            : %d\n", sectors_in_fat_table);
+    printf("Sectors in Root Directory                       : %d\n", sectors_in_root_directory);
+    printf("Sectors in Data Section                         : %d\n", sectors_in_data_section);
+    printf("Total Sectors                                   : %d\n", boot_record.total_sectors);
+    printf("File Descriptor Data Sector Offset in Bytes     : %d\n", file_desc_data_sector_offset);
+
     printf("\n");
 }
 
@@ -237,6 +248,33 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     print_decimal   ("FILE SIZE IN BYTES                ", entry->file_size_in_bytes                                 );
     printf("\n");
     too_many_prints++;
+}
+
+void read_cluster(int cluster_offset_in_bytes) {
+    Sector cluster_data;
+
+    // Move the file pointer to the cluster location
+    fseek(image_file, 
+            cluster_offset_in_bytes,
+            SEEK_SET
+        );
+
+    // Read the cluster data
+    fread(&cluster_data, sizeof(Sector), 1, image_file);
+
+    print_string("CLUSTER DATA  ", (unsigned char *) &cluster_data, sizeof(Sector));
+    printf("\n");
+}
+
+// According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
+// So each data entry points to a cluster containing the data. This cluster is located in the Data Section.
+// If the data can't fit in a single cluster, then it points to another cluster in the Data Section.
+// Sort of like a linked list.
+
+void read_data_in_this_entry(StandardDirectoryEntry *entry) {
+    int cluster_offset_in_bytes = file_desc_data_sector_offset + (entry->first_cluster_number - 2) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector;
+
+    read_cluster(cluster_offset_in_bytes);
 }
 
 void read_root_directory_section() {
@@ -358,10 +396,16 @@ void read_root_directory_section() {
             standard_entries++;
         }
 
-        // Step 5:
+        // Step 6:
         // Print the standard entry data.
         printf("Entry %d:\n", i);
         print_standard_directory_entry(&entries[i].standard_entry);
+
+        // Step 7:
+        // Read the data in this entry if the attribute is ARCHIEVE.
+        if(entries[i].standard_entry.attribute == 0x20) {
+            read_data_in_this_entry(&entries[i].standard_entry);
+        }
     }
 
     printf("Total entries       : %d\n", unused_entries + empty_entries + lfn_entries + standard_entries);
@@ -369,16 +413,12 @@ void read_root_directory_section() {
     printf("Empty entries       : %d\n", empty_entries);
     printf("LFN entries         : %d\n", lfn_entries);
     printf("Standard entries    : %d\n", standard_entries);
-    printf("\n");
+    printf("\n");    
+}
 
-    // According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
-    // So each data entry points to one cluster. This cluster is located in the Data Section.
-
-    // The first file happened to be at the first cluster in the Data Section here.
-    // So techinically we are reading the data.
-    char *rd_cluster = (char *) malloc(sizeof(char) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
-    fread(rd_cluster, sizeof(char) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector, 1, image_file);
-    print_string("RD CLUSTER", rd_cluster, boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
+void close_disk_img() {
+    // Forgot that closing a file is a thing
+    if(image_file != NULL) fclose(image_file);
 }
 
 int main(int argc, unsigned char *argv[]) {
@@ -394,6 +434,7 @@ int main(int argc, unsigned char *argv[]) {
     read_boot_drive_section();
     read_file_allocation_table_section();
     read_root_directory_section();
+    close_disk_img();
     
     return 0;
 }

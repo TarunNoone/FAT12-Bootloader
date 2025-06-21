@@ -15,9 +15,6 @@ bin/floppy.img: src/main.asm
 	# Create the Bootloader Binary
 	nasm src/main.asm -f bin -o bin/bootloader.bin
 	
-	# Create a text file
-	echo "Lorem ipsum dolar sit amet" > bin/lore.txt
-	
 	# Create a 1440kB file for floppy disk image	
 	dd if=/dev/zero of=bin/floppy.img bs=512 count=2880
 	
@@ -30,8 +27,10 @@ bin/floppy.img: src/main.asm
 	# Fun fact: There's an order for adjectives.
 	# It's abbreviated to OSASCOMP : Opinion, Size, Age, Shape, Color, Material, Origin, Type
 
-	# mcopy -i bin/floppy.img bin/lore.txt "::lore.txt"
-	mcopy -i bin/floppy.img bin/lore.txt "::legendary_colossal_archaic_spherical_crimson_draconian_obsidian_tome_lore.txt"
+	mcopy -i bin/floppy.img src/lore.txt "::lore.txt"
+	mcopy -i bin/floppy.img src/lore.txt "::legendary_colossal_archaic_spherical_crimson_draconian_obsidian_tome_lore.txt"
+	mcopy -i bin/floppy.img src/lore512.txt "::lore512.txt"
+	mcopy -i bin/floppy.img src/lore1024.txt "::lore1024.txt"
 
 	# Copy multiple copies to fill the floppy disk image. Just for testing.
 	# ./src/multiple_copies.sh

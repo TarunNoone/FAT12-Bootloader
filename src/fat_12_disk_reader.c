@@ -2,8 +2,6 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
 // BIOS Parameter Block aka. Boot Record
 typedef struct {
@@ -52,7 +50,7 @@ typedef struct {
 
 typedef struct {
     uint8_t sequence_number; // This is 1-based index.
-    unsigned char name_1[10]; // It's easier to print unsigned chars, than uint16_t // uint16_t name_1[5];
+    unsigned char name_1[10]; // It's easier to print chars, than uint16_t // uint16_t name_1[5];
     uint8_t attribute; // always 0x0F for LFN entries
     uint8_t long_entry_type;
     uint8_t checksum;
@@ -67,6 +65,12 @@ typedef union {
 } RootDirectoryEntry;
 
 FILE *image_file = NULL;
+
+int sectors_in_reserved_section;
+int sectors_in_fat_table;
+int sectors_in_root_directory;
+int sectors_in_data_section;
+int first_data_sector;
 
 BootRecord boot_record;
 ExtendedBootRecord extended_boot_record;
@@ -99,12 +103,22 @@ void print_hex(unsigned char *label, uint8_t *ptr, int size) {
     printf("\n");
 }
 
+void print_decimal(unsigned char *label, uint32_t number) {
+    printf("%s: \t", label);
+    printf("%d\n", number);
+}
+
 void print_string(unsigned char *label, unsigned char *str, int size) {
     printf("%s: \t", label);
+    int null_count = 0;
+
     for(int i = 0; i < size; i++) {
+        if(str[i] == 0x00) {
+            null_count++;
+        }
         printf("%c", str[i]);
     }
-    printf("\n");
+    // printf("\nNull count: %d\n", null_count);
 }
 
 void print_long_file_name(unsigned char *label, unsigned char *str, int size) {
@@ -113,12 +127,12 @@ void print_long_file_name(unsigned char *label, unsigned char *str, int size) {
     int padding_count = 0;
 
     for(int i = 0; i < size; i++) {
-        // Skip 0x00. It's a NULL unsigned character.
+        // Skip 0x00. It's a NULL character.
         // Skip 0xFF. It's just padding.
-        // It needs to be casted to unsigned unsigned char.
+        // It needs to be casted to unsigned char.
         // Otherwise, it'll be implicitly casted to int, which is 32-bit wide.
         // So it'll become FF FF FF FF
-        // Better to use unsigned unsigned char everywhere to avoid type issues.
+        // Better to use unsigned char everywhere to avoid type issues.
         if(str[i] == 0xFF) {
             padding_count++;
             // printf(" + ");
@@ -169,6 +183,25 @@ void read_boot_drive_section() {
     print_hex("SYSTEM IDENTIFIER   ", (uint8_t *) &extended_boot_record.system_identifier    ,  8);
     print_hex("BOOT SIGNATURE      ", (uint8_t *) &extended_boot_record.boot_signature       ,  2);
     printf("\n");
+
+    // Bytes are read from the volume / storage in units of sectors.
+    // So it's better to know how many sectors each sections have.
+    // Ideally these should be clusters_in_x_section, but since custer = sector in this, it's fineeee for now.
+    sectors_in_reserved_section = boot_record.reserved_sectors;
+    sectors_in_fat_table = boot_record.fat_count * boot_record.sectors_per_fat;
+
+    // Round up to nearest sector count.
+    sectors_in_root_directory = ((boot_record.root_dir_entries_count * sizeof(RootDirectoryEntry)) + (boot_record.bytes_per_sector - 1)) / boot_record.bytes_per_sector;
+    sectors_in_data_section = boot_record.total_sectors - (sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory);
+
+    first_data_sector = sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory;
+
+    printf("Sectors in Reserved Section         : %d\n", sectors_in_reserved_section);
+    printf("Sectors in FAT Table                : %d\n", sectors_in_fat_table);
+    printf("Sectors in Root Directory           : %d\n", sectors_in_root_directory);
+    printf("Sectors in Data Section             : %d\n", sectors_in_data_section);
+    printf("Total Sectors                       : %d\n", boot_record.total_sectors);
+    printf("\n");
 }
 
 void read_file_allocation_table_section() {
@@ -178,7 +211,7 @@ void read_file_allocation_table_section() {
     
     // This is too much data to read without much use right now.
     // Instead using fseek to skip over the FAT table section..
-    int fat_table_size = boot_record.fat_count * boot_record.sectors_per_fat * boot_record.bytes_per_sector;
+    int fat_table_size = sectors_in_fat_table * boot_record.bytes_per_sector;
     // uint8_t *fat_tables = (uint8_t *) malloc(sizeof(uint8_t) * fat_table_size);
     // fread(fat_tables, fat_table_size, 1, image_file);
 
@@ -190,18 +223,18 @@ int too_many_prints = 0;
 void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     if(too_many_prints > 5) return;
 
-    print_string("FILE NAME                         ", (unsigned char *) &entry->file_name                            , 11);
-    print_hex   ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
-    print_hex   ("RESERVED WINDOWS NT               ", (uint8_t *) &entry->reserved_windows_nt               ,  1);
-    print_hex   ("CREATION TIME IN HUNDREDTH SECS   ", (uint8_t *) &entry->creation_time_in_hundredth_secs   ,  1);
-    print_hex   ("CREATED TIME                      ", (uint8_t *) &entry->created_time                      ,  2);
-    print_hex   ("CREATED DATE                      ", (uint8_t *) &entry->created_date                      ,  2);
-    print_hex   ("LAST ACCESSED DATE                ", (uint8_t *) &entry->last_accessed_date                ,  2);
-    print_hex   ("ALWAYS ZERO                       ", (uint8_t *) &entry->always_zero                       ,  2);
-    print_hex   ("LAST MODIFIED TIME                ", (uint8_t *) &entry->last_modified_time                ,  2);
-    print_hex   ("LAST MODIFIED DATE                ", (uint8_t *) &entry->last_modified_date                ,  2);
-    print_hex   ("FIRST CLUSTER NUMBER              ", (uint8_t *) &entry->first_cluster_number              ,  2);
-    print_hex   ("FILE SIZE IN BYTES                ", (uint8_t *) &entry->file_size_in_bytes                ,  4);
+    print_string    ("FILE NAME                         ", (unsigned char *) &entry->file_name                   , 11);
+    print_hex       ("ATTRIBUTE                         ", (uint8_t *) &entry->attribute                         ,  1);
+    print_hex       ("RESERVED WINDOWS NT               ", (uint8_t *) &entry->reserved_windows_nt               ,  1);
+    print_hex       ("CREATION TIME IN HUNDREDTH SECS   ", (uint8_t *) &entry->creation_time_in_hundredth_secs   ,  1);
+    print_hex       ("CREATED TIME                      ", (uint8_t *) &entry->created_time                      ,  2);
+    print_hex       ("CREATED DATE                      ", (uint8_t *) &entry->created_date                      ,  2);
+    print_hex       ("LAST ACCESSED DATE                ", (uint8_t *) &entry->last_accessed_date                ,  2);
+    print_hex       ("ALWAYS ZERO                       ", (uint8_t *) &entry->always_zero                       ,  2);
+    print_hex       ("LAST MODIFIED TIME                ", (uint8_t *) &entry->last_modified_time                ,  2);
+    print_hex       ("LAST MODIFIED DATE                ", (uint8_t *) &entry->last_modified_date                ,  2);
+    print_decimal   ("FIRST CLUSTER NUMBER              ", entry->first_cluster_number                               );
+    print_decimal   ("FILE SIZE IN BYTES                ", entry->file_size_in_bytes                                 );
     printf("\n");
     too_many_prints++;
 }
@@ -336,6 +369,16 @@ void read_root_directory_section() {
     printf("Empty entries       : %d\n", empty_entries);
     printf("LFN entries         : %d\n", lfn_entries);
     printf("Standard entries    : %d\n", standard_entries);
+    printf("\n");
+
+    // According the FAT12 OSDev Wiki Page, FAT considered storage as a series of clusters.
+    // So each data entry points to one cluster. This cluster is located in the Data Section.
+
+    // The first file happened to be at the first cluster in the Data Section here.
+    // So techinically we are reading the data.
+    char *rd_cluster = (char *) malloc(sizeof(char) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
+    fread(rd_cluster, sizeof(char) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector, 1, image_file);
+    print_string("RD CLUSTER", rd_cluster, boot_record.sectors_per_cluster * boot_record.bytes_per_sector);
 }
 
 int main(int argc, unsigned char *argv[]) {

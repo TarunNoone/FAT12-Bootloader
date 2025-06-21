@@ -407,6 +407,10 @@ void read_n_directory_entries(RootDirectoryEntry *entries, int n) {
         // Step 7:
         // Read the data in this entry if the attribute is ARCHIEVE / DIRECTORY.
         if(entries[i].standard_entry.attribute == 0x20 || entries[i].standard_entry.attribute == 0x10) {
+            // Primarily to skip ".", ".."
+            // But there could be hidden files, those still need to be processed somehow.
+            if(entries[i].standard_entry.file_name[0] == '.') continue;
+
             read_data_in_this_entry(&entries[i].standard_entry);
             printf("\n");
         }
@@ -470,11 +474,11 @@ void read_data_in_this_entry(StandardDirectoryEntry *entry) {
         printf("END OF ARCHIEVE CHAIN\n");
     }
 
-    // if(entry->attribute == 0x10) {
-    //     printf("ATTRIBUTE: DIRECTORY\n");
-    //     read_cluster_chain(entry->first_cluster_number, 1);
-    //     printf("END OF DIRECTORY CHAIN\n");
-    // }
+    if(entry->attribute == 0x10) {
+        printf("ATTRIBUTE: DIRECTORY\n");
+        read_cluster_chain(entry->first_cluster_number, 1);
+        printf("END OF DIRECTORY CHAIN\n");
+    }
 }
 
 void read_root_directory_section() {

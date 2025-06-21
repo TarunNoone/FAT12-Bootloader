@@ -71,12 +71,15 @@ typedef uint8_t Sector[512];
 FILE *image_file = NULL;
 
 int sectors_in_reserved_section;
-int sectors_in_fat_table;
+int sectors_in_fat_section;
 int sectors_in_root_directory;
 int sectors_in_data_section;
 
+int first_fat_sector_index;
+int file_desc_fat_section_offset;
+
 int first_data_sector_index;
-int file_desc_data_sector_offset;
+int file_desc_data_section_offset;
 
 BootRecord boot_record;
 ExtendedBootRecord extended_boot_record;
@@ -195,22 +198,25 @@ void read_boot_drive_section() {
     // So it's better to know how many sectors each sections have.
     // Ideally these should be clusters_in_x_section, but since custer = sector in this, it's fineeee for now.
     sectors_in_reserved_section = boot_record.reserved_sectors;
-    sectors_in_fat_table = boot_record.fat_count * boot_record.sectors_per_fat;
+    sectors_in_fat_section = boot_record.fat_count * boot_record.sectors_per_fat;
 
     // Round up to nearest sector count.
     sectors_in_root_directory = ((boot_record.root_dir_entries_count * sizeof(RootDirectoryEntry)) + (boot_record.bytes_per_sector - 1)) / boot_record.bytes_per_sector;
-    sectors_in_data_section = boot_record.total_sectors - (sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory);
+    sectors_in_data_section = boot_record.total_sectors - (sectors_in_reserved_section + sectors_in_fat_section + sectors_in_root_directory);
 
-    // Calculate the offset of Data Sector wrt. the start of the Floppyy Disk Image.
-    first_data_sector_index = sectors_in_reserved_section + sectors_in_fat_table + sectors_in_root_directory;
-    file_desc_data_sector_offset = first_data_sector_index * boot_record.bytes_per_sector;
+    // Calculate the offset of FAT Section, Data Section wrt. the start of the Floppyy Disk Image.
+    first_fat_sector_index = sectors_in_reserved_section;
+    file_desc_fat_section_offset = sectors_in_reserved_section * boot_record.bytes_per_sector;
+
+    first_data_sector_index = sectors_in_reserved_section + sectors_in_fat_section + sectors_in_root_directory;
+    file_desc_data_section_offset = first_data_sector_index * boot_record.bytes_per_sector;
 
     printf("Sectors in Reserved Section                     : %d\n", sectors_in_reserved_section);
-    printf("Sectors in FAT Table                            : %d\n", sectors_in_fat_table);
+    printf("Sectors in FAT Section                          : %d\n", sectors_in_fat_section);
     printf("Sectors in Root Directory                       : %d\n", sectors_in_root_directory);
     printf("Sectors in Data Section                         : %d\n", sectors_in_data_section);
     printf("Total Sectors                                   : %d\n", boot_record.total_sectors);
-    printf("File Descriptor Data Sector Offset in Bytes     : %d\n", file_desc_data_sector_offset);
+    printf("File Descriptor Data Sector Offset in Bytes     : %d\n", file_desc_data_section_offset);
 
     printf("\n");
 }
@@ -219,15 +225,10 @@ void read_file_allocation_table_section() {
     // After the Reserved Section is the File Allocation Table Section.
     // There are 2 FAT tables here usually. This is intended for redudancy.
     // Each FAT table contains 9 sectors.
-    
-    // This is too much data to read without much use right now.
-    // Instead using fseek to skip over the FAT table section..
-    int fat_table_size = sectors_in_fat_table * boot_record.bytes_per_sector;
-    // uint8_t *fat_tables = (uint8_t *) malloc(sizeof(uint8_t) * fat_table_size);
-    // fread(fat_tables, fat_table_size, 1, image_file);
 
+    // This is too much data to read into memory.
     // Skip over the FAT table section.
-    fseek(image_file, fat_table_size, SEEK_CUR);
+    fseek(image_file, boot_record.fat_count * boot_record.sectors_per_fat * boot_record.bytes_per_sector, SEEK_CUR);
 }
 
 int too_many_prints = 0;
@@ -250,8 +251,62 @@ void print_standard_directory_entry(StandardDirectoryEntry *entry) {
     too_many_prints++;
 }
 
-void read_cluster(int cluster_offset_in_bytes) {
+void get_next_cluster_number(int active_cluster_number) {
+
+    // Sector fat_table[boot_record.sectors_per_fat];
+    // fseek(image_file, file_desc_fat_section_offset, SEEK_SET);
+    // fread(&fat_table, sizeof(Sector) * boot_record.sectors_per_fat, 1,image_file);
+
+    // // print_hex("FAT TABLE", (uint8_t *) &fat_table, sizeof(Sector) * boot_record.sectors_per_fat);
+
+    // printf("Size of short dtype: %zu \n", sizeof(unsigned short));
+
+    // (9 sectors / FAT_table * 512 bytes / sector * 8 bits / bytes) / (12 bits / FAT entry) = 3072 FAT entries / FAT_table
+    uint8_t fat_table[boot_record.bytes_per_sector * 2];
+    uint16_t table_value;
+    int fat_table_index = 0;
+
+    // Assume the fat_table is zer-based indexing, i.e. first 12-bit entry is index-0
+    
+    // So for FAT-entry-0, &(fat_table[0]) gives the starting pointer
+    // Read 16-bits from this pointer. Remove last 4 bits. Voila, 12-bits of FAT-entry-0
+    // Array-operator has higher precendence than address-of operator.
+    // And that is what we want.
+    fat_table_index = 0;
+    table_value = *((uint16_t *)(&fat_table[0])) >> 4;
+
+    // For FAT-entry-1, &(fat_table[1]) gives the starting pointer
+    // Read 16-bits from this pointer. Remove first 4 bits. Voila, 12-bits of FAT-entry-1
+    fat_table_index = 1;
+    table_value = *((uint16_t *)(&fat_table[1])) & 0xFFF;
+
+    // uint32_t fat_offset = (active_cluster_number * boot_record.bytes_per_sector) + (active_cluster_number * boot_record.bytes_per_sector) / 2;
+    // uint32_t fat_sector = first_fat_sector_index + (fat_offset / boot_record.bytes_per_sector);  
+    // uint32_t table_entry_offset = fat_offset % boot_record.bytes_per_sector;
+
+    // // Read FAT sectors needed to get the next cluster number.
+    // // 2 sectors need to be read, since the 12-bit value could be one the border of 2 sectors.
+    // fseek(image_file, fat_sector * boot_record.bytes_per_sector, SEEK_SET);
+    // fread(&fat_table, 2 * sizeof(Sector), 1, image_file);
+
+    // uint16_t table_value = *((uint16_t *)(&fat_table[table_entry_offset]));
+    // table_value = (active_cluster_number & 1) ? table_value >> 4 : table_value & 0XFFF;
+
+    if(table_value >= 0xFF8) {
+        printf("There are no more clusters in the chain.\n");
+    } else if(table_value == 0xFF7) {
+        printf("This is a bad cluster.\n");
+    } else {
+        printf("Next cluster number: %d\n", table_value);
+    }
+    printf("\n");
+}
+
+void read_cluster(int active_cluster_number) {
+    int cluster_offset_in_bytes;
     Sector cluster_data;
+
+    cluster_offset_in_bytes = file_desc_data_section_offset + (active_cluster_number - 2) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector;
 
     // Move the file pointer to the cluster location
     fseek(image_file, 
@@ -261,8 +316,10 @@ void read_cluster(int cluster_offset_in_bytes) {
 
     // Read the cluster data
     fread(&cluster_data, sizeof(Sector), 1, image_file);
-
     print_string("CLUSTER DATA  ", (unsigned char *) &cluster_data, sizeof(Sector));
+
+    get_next_cluster_number(active_cluster_number);
+
     printf("\n");
 }
 
@@ -272,9 +329,7 @@ void read_cluster(int cluster_offset_in_bytes) {
 // Sort of like a linked list.
 
 void read_data_in_this_entry(StandardDirectoryEntry *entry) {
-    int cluster_offset_in_bytes = file_desc_data_sector_offset + (entry->first_cluster_number - 2) * boot_record.sectors_per_cluster * boot_record.bytes_per_sector;
-
-    read_cluster(cluster_offset_in_bytes);
+    read_cluster(entry->first_cluster_number);
 }
 
 void read_root_directory_section() {
